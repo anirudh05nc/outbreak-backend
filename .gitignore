@@ -1,0 +1,24 @@
+# Environment variables (contains AWS keys and JWT secret - NEVER commit this)
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+env/
+.venv/
+
+# IDE files
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+
+credentials.ini
