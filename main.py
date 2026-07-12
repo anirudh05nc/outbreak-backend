@@ -104,7 +104,7 @@ class DeleteAllRequest(BaseModel):
 
 @app.get("/")
 def read_root():
-    return {"message": "DynamoDB API is running!"}
+    return {"message": "Backend is running!"}
 
 
 @app.get("/teams/all")
