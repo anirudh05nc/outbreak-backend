@@ -3,6 +3,7 @@ import csv
 import time
 from typing import List
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import boto3
@@ -102,9 +103,29 @@ class ImportRequest(BaseModel):
 class DeleteAllRequest(BaseModel):
     password: str
 
-@app.get("/")
+@app.api_route("/", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
 def read_root():
-    return {"message": "Backend is running!"}
+    return HTMLResponse(content="""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Outbreak 26 API</title>
+        <meta charset="utf-8">
+        <style>
+            body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f0f2f5; margin: 0; }
+            .container { text-align: center; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+            h1 { color: #1a73e8; margin-bottom: 0.5rem; }
+            p { color: #5f6368; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Outbreak 26</h1>
+            <p>API Server is active and running successfully.</p>
+        </div>
+    </body>
+    </html>
+    """, status_code=200)
 
 
 @app.get("/teams/all")
