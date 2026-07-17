@@ -110,7 +110,7 @@ def read_root():
     <html>
     <head>
         <title>Outbreak 26 API</title>
-        <meta charset="utf-8">
+        <meta charset="utf-8">  
         <style>
             body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f0f2f5; margin: 0; }
             .container { text-align: center; padding: 2rem; background: white; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
@@ -243,6 +243,7 @@ def revoke_all_selections():
 
 @app.get("/settings")
 def get_settings():
+    import time as _time
     try:
         response = table.get_item(Key={'TeamID': 'SYSTEM_SETTINGS'})
         item = response.get('Item')
@@ -263,7 +264,8 @@ def get_settings():
                 'TimerStartTime': 0,
                 'TimerDuration': 0,
                 'DeleteProtectionActive': False,
-                'ProblemsCsvUploaded': False
+                'ProblemsCsvUploaded': False,
+                'ServerTime': int(_time.time())
             }
         return {
             'SelectionEnabled': item.get('SelectionEnabled', False),
@@ -271,7 +273,8 @@ def get_settings():
             'TimerStartTime': int(item.get('TimerStartTime', 0)),
             'TimerDuration': int(item.get('TimerDuration', 0)),
             'DeleteProtectionActive': item.get('DeleteProtectionActive', False),
-            'ProblemsCsvUploaded': item.get('ProblemsCsvUploaded', False)
+            'ProblemsCsvUploaded': item.get('ProblemsCsvUploaded', False),
+            'ServerTime': int(_time.time())
         }
     except ClientError as e:
         raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
@@ -321,7 +324,7 @@ def launch_timer(req: TimerLaunchRequest):
                 ':d': req.duration
             }
         )
-        return {"message": "Timer launched successfully.", "TimerStartTime": expiry_time, "TimerDuration": req.duration}
+        return {"message": "Timer launched successfully.", "TimerStartTime": expiry_time, "TimerDuration": req.duration, "ServerTime": int(time.time())}
     except ClientError as e:
         raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
 
