@@ -69,6 +69,18 @@ class TeamReviewRequest(BaseModel):
 class ToggleDeleteProtectionRequest(BaseModel):
     enabled: bool
 
+class ToggleFeedbackRequest(BaseModel):
+    enabled: bool
+
+class FeedbackSubmissionRequest(BaseModel):
+    team_id: str
+    reg_no: str
+    how_was_event: str
+    improvements: str
+    discomfort: str
+    other: str
+    rating: int  # 1-5
+
 class TeamImportItem(BaseModel):
     TeamID: str
     TeamName: str
@@ -265,6 +277,7 @@ def get_settings():
                 'TimerDuration': 0,
                 'DeleteProtectionActive': False,
                 'ProblemsCsvUploaded': False,
+                'FeedbackEnabled': False,
                 'ServerTime': int(_time.time())
             }
         return {
@@ -274,6 +287,7 @@ def get_settings():
             'TimerDuration': int(item.get('TimerDuration', 0)),
             'DeleteProtectionActive': item.get('DeleteProtectionActive', False),
             'ProblemsCsvUploaded': item.get('ProblemsCsvUploaded', False),
+            'FeedbackEnabled': item.get('FeedbackEnabled', False),
             'ServerTime': int(_time.time())
         }
     except ClientError as e:
@@ -664,6 +678,147 @@ def toggle_delete_protection(req: ToggleDeleteProtectionRequest):
             ExpressionAttributeValues={':val': req.enabled}
         )
         return {"message": "Delete protection configuration updated successfully.", "enabled": req.enabled}
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
+
+
+@app.post("/settings/toggle-feedback")
+def toggle_feedback(req: ToggleFeedbackRequest):
+    """
+    Admin-only: Globally enables or disables the participant feedback form.
+    Controls the FeedbackEnabled boolean on the SYSTEM_SETTINGS item.
+    """
+    try:
+        table.update_item(
+            Key={'TeamID': 'SYSTEM_SETTINGS'},
+            UpdateExpression="set FeedbackEnabled = :val",
+            ExpressionAttributeValues={':val': req.enabled}
+        )
+        return {"message": "Feedback gate updated successfully.", "enabled": req.enabled}
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
+
+
+@app.post("/teams/{team_id}/submit-feedback")
+def submit_feedback(team_id: str, req: FeedbackSubmissionRequest):
+    """
+    Participant endpoint: Submits event feedback for a specific team member.
+    Guards:
+      - FeedbackEnabled must be True in SYSTEM_SETTINGS.
+      - The team and member (by reg_no) must exist.
+    On success, sets FeedbackSubmitted = True on the member's map inside Members[].
+    Uses a read-modify-write because DynamoDB cannot update a list element by predicate.
+    """
+    if team_id == "SYSTEM_SETTINGS":
+        raise HTTPException(status_code=400, detail="Invalid team feedback request")
+
+    # Validate rating range
+    if req.rating < 1 or req.rating > 5:
+        raise HTTPException(status_code=400, detail="Rating must be between 1 and 5.")
+
+    try:
+        # Gate: feedback must be globally enabled
+        settings_res = table.get_item(Key={'TeamID': 'SYSTEM_SETTINGS'})
+        settings_item = settings_res.get('Item', {})
+        if not settings_item.get('FeedbackEnabled', False):
+            raise HTTPException(
+                status_code=403,
+                detail="Feedback submission is currently disabled by the administrator."
+            )
+
+        # Fetch the team record
+        team_res = table.get_item(Key={'TeamID': team_id})
+        team = team_res.get('Item')
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        members = team.get('Members', [])
+        member_found = False
+        updated_members = []
+
+        for m in members:
+            # Normalize reg_no comparison (case-insensitive, stripped)
+            if m.get('regNo', '').strip().lower() == req.reg_no.strip().lower():
+                m = dict(m)  # make a mutable copy
+                m['FeedbackSubmitted'] = True
+                m['FeedbackData'] = {
+                    'HowWasEvent': req.how_was_event,
+                    'Improvements': req.improvements,
+                    'Discomfort': req.discomfort,
+                    'Other': req.other,
+                    'Rating': req.rating
+                }
+                member_found = True
+            updated_members.append(m)
+
+        if not member_found:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Member with registration number '{req.reg_no}' not found in team '{team_id}'."
+            )
+
+        # Write back the full Members list
+        table.update_item(
+            Key={'TeamID': team_id},
+            UpdateExpression="SET Members = :members",
+            ExpressionAttributeValues={':members': updated_members}
+        )
+
+        return {"message": "Feedback submitted successfully. Certificate download is now unlocked."}
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
+
+
+@app.get("/api/certificates/participation/presigned-url")
+def get_participation_certificate_url(team_id: str, reg_no: str):
+    """
+    Participant endpoint: Returns a presigned S3 GET URL for a participation certificate.
+    S3 key format: participation-certificates/{team_id}/{reg_no}.pdf
+    Guards:
+      - Team must exist.
+      - Member (by reg_no) must have FeedbackSubmitted == True.
+    """
+    if team_id == "SYSTEM_SETTINGS":
+        raise HTTPException(status_code=400, detail="Invalid team request")
+
+    try:
+        team_res = table.get_item(Key={'TeamID': team_id})
+        team = team_res.get('Item')
+        if not team:
+            raise HTTPException(status_code=404, detail="Team not found")
+
+        members = team.get('Members', [])
+        member = None
+        for m in members:
+            if m.get('regNo', '').strip().lower() == reg_no.strip().lower():
+                member = m
+                break
+
+        if not member:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Member with registration number '{reg_no}' not found."
+            )
+
+        if not member.get('FeedbackSubmitted', False):
+            raise HTTPException(
+                status_code=403,
+                detail="Certificate download is locked until feedback is submitted."
+            )
+
+        # Build the exact S3 key per specification
+        s3_key = f"participation-certificates/{team_id}/{reg_no}.pdf"
+
+        presigned_url = s3_client.generate_presigned_url(
+            ClientMethod='get_object',
+            Params={
+                'Bucket': S3_BUCKET,
+                'Key': s3_key
+            },
+            ExpiresIn=3600
+        )
+
+        return {"url": presigned_url, "s3_key": s3_key}
     except ClientError as e:
         raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
 
