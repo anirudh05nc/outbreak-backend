@@ -72,6 +72,9 @@ class ToggleDeleteProtectionRequest(BaseModel):
 class ToggleFeedbackRequest(BaseModel):
     enabled: bool
 
+class UpdatePhaseRequest(BaseModel):
+    phase_index: int
+
 class FeedbackSubmissionRequest(BaseModel):
     team_id: str
     reg_no: str
@@ -267,7 +270,8 @@ def get_settings():
                 'TimerStartTime': 0,
                 'TimerDuration': 0,
                 'DeleteProtectionActive': False,
-                'ProblemsCsvUploaded': False
+                'ProblemsCsvUploaded': False,
+                'CurrentPhaseIndex': 0
             }
             table.put_item(Item=initial_settings)
             return {
@@ -278,6 +282,7 @@ def get_settings():
                 'DeleteProtectionActive': False,
                 'ProblemsCsvUploaded': False,
                 'FeedbackEnabled': False,
+                'CurrentPhaseIndex': 0,
                 'ServerTime': int(_time.time())
             }
         return {
@@ -288,8 +293,24 @@ def get_settings():
             'DeleteProtectionActive': item.get('DeleteProtectionActive', False),
             'ProblemsCsvUploaded': item.get('ProblemsCsvUploaded', False),
             'FeedbackEnabled': item.get('FeedbackEnabled', False),
+            'CurrentPhaseIndex': int(item.get('CurrentPhaseIndex', 0)),
             'ServerTime': int(_time.time())
         }
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
+
+
+@app.post("/settings/update-phase")
+def update_phase(req: UpdatePhaseRequest):
+    try:
+        if req.phase_index < 0 or req.phase_index > 8:
+            raise HTTPException(status_code=400, detail="Invalid phase index. Must be between 0 and 8.")
+        table.update_item(
+            Key={'TeamID': 'SYSTEM_SETTINGS'},
+            UpdateExpression="set CurrentPhaseIndex = :val",
+            ExpressionAttributeValues={':val': req.phase_index}
+        )
+        return {"message": "Roadmap phase index updated successfully.", "CurrentPhaseIndex": req.phase_index}
     except ClientError as e:
         raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
 
