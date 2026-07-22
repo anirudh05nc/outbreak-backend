@@ -75,6 +75,9 @@ class ToggleFeedbackRequest(BaseModel):
 class UpdatePhaseRequest(BaseModel):
     phase_index: int
 
+class AnnouncementRequest(BaseModel):
+    text: str
+
 class FeedbackSubmissionRequest(BaseModel):
     team_id: str
     reg_no: str
@@ -271,7 +274,8 @@ def get_settings():
                 'TimerDuration': 0,
                 'DeleteProtectionActive': False,
                 'ProblemsCsvUploaded': False,
-                'CurrentPhaseIndex': 0
+                'CurrentPhaseIndex': 0,
+                'Announcements': []
             }
             table.put_item(Item=initial_settings)
             return {
@@ -283,6 +287,7 @@ def get_settings():
                 'ProblemsCsvUploaded': False,
                 'FeedbackEnabled': False,
                 'CurrentPhaseIndex': 0,
+                'Announcements': [],
                 'ServerTime': int(_time.time())
             }
         return {
@@ -294,10 +299,64 @@ def get_settings():
             'ProblemsCsvUploaded': item.get('ProblemsCsvUploaded', False),
             'FeedbackEnabled': item.get('FeedbackEnabled', False),
             'CurrentPhaseIndex': int(item.get('CurrentPhaseIndex', 0)),
+            'Announcements': item.get('Announcements', []),
             'ServerTime': int(_time.time())
         }
     except ClientError as e:
         raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
+
+
+@app.get("/announcements")
+def get_announcements():
+    try:
+        response = table.get_item(Key={'TeamID': 'SYSTEM_SETTINGS'})
+        item = response.get('Item', {})
+        announcements = item.get('Announcements', [])
+        return {"announcements": announcements}
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
+
+
+@app.post("/announcements")
+def publish_announcement(req: AnnouncementRequest):
+    if not req.text.strip():
+        raise HTTPException(status_code=400, detail="Announcement text cannot be empty.")
+    try:
+        response = table.get_item(Key={'TeamID': 'SYSTEM_SETTINGS'})
+        item = response.get('Item', {}) if response else {}
+        announcements = item.get('Announcements', []) if item else []
+        new_ann = {
+            "id": int(time.time() * 1000),
+            "timestamp": time.strftime("%I:%M:%S %p"),
+            "text": req.text.strip()
+        }
+        updated = [new_ann] + list(announcements)
+        table.update_item(
+            Key={'TeamID': 'SYSTEM_SETTINGS'},
+            UpdateExpression="set Announcements = :val",
+            ExpressionAttributeValues={':val': updated}
+        )
+        return {"message": "Announcement published successfully.", "announcement": new_ann, "announcements": updated}
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
+
+
+@app.delete("/announcements/{announcement_id}")
+def delete_announcement(announcement_id: int):
+    try:
+        response = table.get_item(Key={'TeamID': 'SYSTEM_SETTINGS'})
+        item = response.get('Item', {}) if response else {}
+        announcements = item.get('Announcements', []) if item else []
+        updated = [a for a in announcements if int(a.get('id', 0)) != int(announcement_id)]
+        table.update_item(
+            Key={'TeamID': 'SYSTEM_SETTINGS'},
+            UpdateExpression="set Announcements = :val",
+            ExpressionAttributeValues={':val': updated}
+        )
+        return {"message": "Announcement deleted successfully.", "announcements": updated}
+    except ClientError as e:
+        raise HTTPException(status_code=500, detail=e.response['Error']['Message'])
+
 
 
 @app.post("/settings/update-phase")
